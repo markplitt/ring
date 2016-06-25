@@ -1,8 +1,8 @@
 from neuron import h
 h.load_file('nrngui.hoc')
 pc = h.ParallelContext()
-rank = int(pc.id())
-nhost = int(pc.nhost())
+rank = int(pc.id()) # rank in subworld
+nhost = int(pc.nhost()) # host in subworld
 from cell import BallStick
 
 class Ring(object):
@@ -16,7 +16,7 @@ class Ring(object):
     self.spike_record()
 
   def __del__(self):
-    pc.gid_clear()
+    pc.gid_clear() # destroys gids to clear namespace
     #print "delete ", self
 
   def mkring(self, ncell):
@@ -26,18 +26,18 @@ class Ring(object):
   def mkcells(self, ncell):
     global rank, nhost
     self.cells = []
-    for i in range(rank, ncell, nhost):
+    for i in range(rank, ncell, nhost): # round robin allocation of gids
       cell = BallStick()
       self.cells.append(cell)
       pc.set_gid2node(i, rank)
       nc = cell.connect2target(None)
-      pc.cell(i, nc)
+      pc.cell(i, nc) # assign GID to netcon source
 
   def connectcells(self, ncell):
     global rank, nhost
     self.nclist = []
     # not efficient but demonstrates use of pc.gid_exists
-    for i in range(ncell):
+    for i in range(ncell): # creates directed nearest neighbor connectivity
       targid = (i+1)%ncell
       if pc.gid_exists(targid):
         target = pc.gid2cell(targid)
@@ -68,15 +68,16 @@ class Ring(object):
 
 
 def runring(ncell=5, delay=1, tstop=100):
-  ring = Ring(ncell, delay)
-  pc.set_maxstep(10)
+  ring = Ring(ncell, delay) # ring is local, therefore destroyed upon exit
+  pc.set_maxstep(10) # minimum NetCon delay
   h.stdinit()
   pc.psolve(tstop)
-  spkcnt = pc.allreduce(len(ring.tvec), 1)
-  tmax = pc.allreduce(ring.tvec.x[-1], 2)
+  spkcnt = pc.allreduce(len(ring.tvec), 1) # total number of spikes in ring
+  tmax = pc.allreduce(ring.tvec.x[-1], 2) # last spike time
+  # min time would be 3 aka first spike
   tt = h.Vector()
   idv = h.Vector()
-  pc.allgather(ring.tvec.x[-1], tt)
-  pc.allgather(ring.idvec.x[-1], idv)
-  idmax = int(idv.x[int(tt.max_ind())])
-  return (int(spkcnt), tmax, idmax, (ncell, delay, tstop, (rank, nhost)))
+  pc.allgather(ring.tvec.x[-1], tt) # all last times in tt
+  pc.allgather(ring.idvec.x[-1], idv) # biggest ids
+  idmax = int(idv.x[int(tt.max_ind())]) # identifier of cell that fired last
+  return (int(spkcnt), tmax, idmax, (ncell, delay, tstop, (pc.id_world(), pc.nhost_world())))
